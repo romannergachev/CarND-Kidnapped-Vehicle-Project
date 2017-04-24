@@ -18,6 +18,18 @@ struct Particle {
 	double y;
 	double theta;
 	double weight;
+
+	void init(int id, double x, double y, double theta, double weight) {
+		this->id     = id;
+		update(x, y, theta, weight);
+	}
+
+	void update(double x, double y, double theta, double weight) {
+		this->x      = x;
+		this->y      = y;
+		this->theta  = theta;
+		this->weight = weight;
+	}
 };
 
 
