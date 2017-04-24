@@ -49,6 +49,7 @@ class ParticleFilter {
 
 private:
 	const unsigned int NUMBER_OF_PARTICLES = 300;
+	std::default_random_engine gen;
 	
 public:
 	
