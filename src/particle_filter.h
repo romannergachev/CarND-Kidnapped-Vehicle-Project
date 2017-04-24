@@ -46,6 +46,9 @@ class ParticleFilter {
 	
 	// Vector of weights of all particles
 	std::vector<double> weights;
+
+private:
+	const unsigned int NUMBER_OF_PARTICLES = 300;
 	
 public:
 	
