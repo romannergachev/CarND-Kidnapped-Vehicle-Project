@@ -6,9 +6,8 @@
  */
 
 #include <random>
-#include <algorithm>
 #include <iostream>
-#include <numeric>
+#include <float.h>
 
 #include "particle_filter.h"
 
@@ -18,6 +17,7 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
   //Set the number of particles.
   num_particles = NUMBER_OF_PARTICLES;
   particles.resize(num_particles);
+  weights.resize(num_particles);
 
   normal_distribution<double> N_x_init(x, std[0]);
   normal_distribution<double> N_y_init(y, std[1]);
@@ -27,13 +27,14 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
   // Add random Gaussian noise to each particle.
   for (int i = 0; i < num_particles; i++) {
     particles[i].init(i, N_x_init(gen), N_y_init(gen), N_theta_init(gen), 1);
+    weights[i] = 1;
   }
 
   is_initialized = true;
 }
 
 void ParticleFilter::prediction(double delta_t, double std_pos[], double velocity, double yaw_rate) {
-	// Add measurements to each particle and add random Gaussian noise.
+	//Add measurements to each particle and add random Gaussian noise.
 
   normal_distribution<double> N_x_init(0, std_pos[0]);
   normal_distribution<double> N_y_init(0, std_pos[1]);
@@ -41,7 +42,7 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
 
   for (auto &particle : particles) // access by reference to avoid copying
   {
-    if (fabs(yaw_rate) < 0.0001) {
+    if (fabs(yaw_rate) < SMALL_NUMBER) {
       particle.x += velocity * delta_t * cos(particle.theta);
       particle.y += velocity * delta_t * sin(particle.theta);
     } else {
@@ -56,34 +57,83 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
 
 }
 
-void ParticleFilter::dataAssociation(std::vector<LandmarkObs> predicted, std::vector<LandmarkObs>& observations) {
-	// TODO: Find the predicted measurement that is closest to each observed measurement and assign the 
-	//   observed measurement to this particular landmark.
-	// NOTE: this method will NOT be called by the grading code. But you will probably find it useful to 
-	//   implement this method and use it as a helper during the updateWeights phase.
+void ParticleFilter::dataAssociation(std::vector<LandmarkObs> predicted, std::vector<LandmarkObs> &observations) {
+  for (auto &observation : observations) {
+    double min_dist = DBL_MAX;
 
+    for (int i = 0; i < predicted.size(); i++) {
+      //calculate distance between landmark and observation
+      double dist = evaluatePointsDistance(observation.x, predicted[i].x, observation.y, predicted[i].y);
+
+      //find the smallest distance for this observation and remember the landmark as id
+      if (dist < min_dist) {
+        observation.id = i;
+        min_dist = dist;
+      }
+    }
+  }
 }
 
-void ParticleFilter::updateWeights(double sensor_range, double std_landmark[], 
-		std::vector<LandmarkObs> observations, Map map_landmarks) {
-	// TODO: Update the weights of each particle using a mult-variate Gaussian distribution. You can read
-	//   more about this distribution here: https://en.wikipedia.org/wiki/Multivariate_normal_distribution
-	// NOTE: The observations are given in the VEHICLE'S coordinate system. Your particles are located
-	//   according to the MAP'S coordinate system. You will need to transform between the two systems.
-	//   Keep in mind that this transformation requires both rotation AND translation (but no scaling).
-	//   The following is a good resource for the theory:
-	//   https://www.willamette.edu/~gorr/classes/GeneralGraphics/Transforms/transforms2d.htm
-	//   and the following is a good resource for the actual equation to implement (look at equation 
-	//   3.33. Note that you'll need to switch the minus sign in that equation to a plus to account 
-	//   for the fact that the map's y-axis actually points downwards.)
-	//   http://planning.cs.uiuc.edu/node99.html
+void ParticleFilter::updateWeights(double sensor_range, double std_landmark[], std::vector<LandmarkObs> observations, Map map_landmarks) {
+  weights.clear();
+
+  for (auto &particle : particles) {
+    //create temp variables
+    vector<LandmarkObs> convertedObservations;
+    vector<LandmarkObs> predicted_landmarks;
+    double newWeight;
+
+    //transform to the map coordinates system and put the new converted observation into the vector
+    for (auto &observation : observations) {
+      LandmarkObs convertedObservation;
+      convertedObservation.id = FALSE_ID;
+      convertedObservation.x = particle.x + observation.x * cos(particle.theta) - observation.y * sin(particle.theta);
+      convertedObservation.y = particle.y + observation.x * sin(particle.theta) + observation.y * cos(particle.theta);
+      convertedObservations.push_back(convertedObservation);
+    }
+
+    //find landmarks that the current particle can measure, i.e. landmarks distance to that < than sensor range
+    for (auto &landmark : map_landmarks.landmark_list) {
+      if (evaluatePointsDistance(particle.x, landmark.x_f, particle.y, landmark.y_f) > sensor_range) {
+        continue;
+      }
+      LandmarkObs predictedLandmark;
+      predictedLandmark.id = landmark.id_i;
+      predictedLandmark.x  = landmark.x_f;
+      predictedLandmark.y  = landmark.y_f;
+      predicted_landmarks.push_back(predictedLandmark);
+    }
+
+    if ((convertedObservations.size() == 0 && predicted_landmarks.size() > 0) || (predicted_landmarks.size() == 0 && convertedObservations.size() > 0)) {
+      newWeight = SMALL_NUMBER;
+    } else {
+      newWeight = 1;
+      //associate observations with sensed landmarks
+      dataAssociation(predicted_landmarks, convertedObservations);
+
+      //find probability of all observations using gaussian distribution
+      for (auto &observation: convertedObservations) {
+        if (observation.id < 0) {
+          continue;
+        }
+        LandmarkObs &landmark = predicted_landmarks[observation.id];
+        newWeight *= evaluateMultiGaussian(observation.x, landmark.x, observation.y, landmark.y, std_landmark[0], std_landmark[1]);
+      }
+    }
+    particle.weight = newWeight;
+    weights.push_back(newWeight);
+  }
 }
 
 void ParticleFilter::resample() {
-	// TODO: Resample particles with replacement with probability proportional to their weight. 
-	// NOTE: You may find std::discrete_distribution helpful here.
-	//   http://en.cppreference.com/w/cpp/numeric/random/discrete_distribution
+  vector<Particle> sampledParticles;
+  discrete_distribution<> N_weight(weights.begin(), weights.end());
 
+  //Resample particles with replacement with probability proportional to their weight.
+  for (int i = 0; i < num_particles; i++) {
+    sampledParticles.push_back(particles[N_weight(gen)]);
+  }
+  particles = sampledParticles;
 }
 
 void ParticleFilter::write(std::string filename) {
@@ -94,4 +144,12 @@ void ParticleFilter::write(std::string filename) {
 		dataFile << particles[i].x << " " << particles[i].y << " " << particles[i].theta << "\n";
 	}
 	dataFile.close();
+}
+
+double ParticleFilter::evaluatePointsDistance(const double x1, const double x2, const double y1, const double y2) {
+  return sqrt(pow(x1 - x2, 2) + pow(y1 - y2, 2));
+}
+
+double ParticleFilter::evaluateMultiGaussian(const double x1, const double x2, const double y1, const double y2, const double sigmaX, const double sigmaY) {
+  return exp(-((pow(x1 - x2, 2) / (sigmaX * sigmaX)) + (pow(y1 - y2, 2) / (sigmaY * sigmaY))) / 2) / 2 / M_PI / sigmaX / sigmaY;
 }
