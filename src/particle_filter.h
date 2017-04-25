@@ -49,8 +49,13 @@ class ParticleFilter {
 
 private:
 	const unsigned int NUMBER_OF_PARTICLES = 300;
+  const double SMALL_NUMBER = 1e-10;
+  const int    FALSE_ID     = -1;
 	std::default_random_engine gen;
-	
+
+  double evaluatePointsDistance(const double x1, const double x2, const double y1, const double y2);
+  double evaluateMultiGaussian(const double x1, const double x2, const double y1, const double y2, const double sigmaX, const double sigmaY);
+
 public:
 	
 	// Set of current particles
